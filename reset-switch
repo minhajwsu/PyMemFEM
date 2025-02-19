@@ -1,0 +1,86 @@
+import mph	
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+mph.option('classkit', True)
+client=mph.start()
+client = mph.start(cores=1) #start the client with 1 core COMMENT
+model=client.load('RRAM_RESET.mph') #Now that we have the client up and running, we can tell it to load a model file.
+client.names() 
+client.models()
+
+surface_tension = 0.01
+delta_mu_RESET_J = 65e8  # [GJ/m^3]
+pi = np.pi
+
+#Inspecting models
+# for (name, value) in model.parameters().items():
+
+#    description = model.description(name)
+
+#    print(f'{description:20} {name} = {value}')
+
+# Define the parameter delta_mu
+delta_mu = 1e7
+s_r=2.5e-9
+h_g=4e-9 #delete this and add inside the loop later
+model.parameter('h_g', value=f'{h_g} [m]')
+model.parameter('s_r', value=f'{s_r} [m]')
+model.solve()  # Solve the model before evaluating
+
+## RESET CONTROL###
+
+
+#asks COMSOL to calculate mean filament temperature, temperature distribution in the device, potential distribution, current density, and electric field in cylindrical coordinate
+#multiple values of source voltage (-0.1,V_S/2,V_S) is required to solve thus taking the
+#last value which corresponds to the voltage of interest
+avgfilT = model.evaluate("avg_filament_Temperature_K")
+avg_filament_Temperature_K = avgfilT[-1]
+maxfilT= model.evaluate("max_filament_Temperature_K")
+max_filament_Temperature_K = maxfilT[-1]
+avggapT= model.evaluate("avg_gap_Temperature_K")
+avg_gap_Temperature_K=avggapT[-1]
+maxgapT= model.evaluate("max_gap_Temperature_K")
+max_gap_Temperature_K=maxgapT[-1]
+avgdielT= model.evaluate("avg_dielectric_Temperature_K")
+avg_dielectric_Temperature_K=avgdielT[-1]
+max_dielT= model.evaluate("max_dielectric_Temperature_K")
+max_dielectric_Temperature_K=max_dielT[-1]
+
+u1_v = model.evaluate("cir.IvsU1_v")
+device_Voltage_V2 = u1_v[-1]
+u1_i = model.evaluate("cir.IvsU1_i")
+device_current_uA2 = 1e6 * (u1_i[-1]) #remember that the current is negative
+R_v = model.evaluate("cir.R1_v")
+Load_VoltageSET_V = R_v[-1]
+device_Resistance_Ohm = 1e6 * device_Voltage_V2 / device_current_uA2
+
+
+
+## This ain't working
+#El_Stat = 6.2415e+18 * model.evaluate(
+    #"((ec.Er)^2+(ec.Ez)^2+(ec.Ephi)^2)*8.85*10^(-12)*25*2*pi*r*(1/2)"
+#)
+El_Stat = 6.2415e+18 * model.evaluate(
+    "intop1(((ec.Er)^2+(ec.Ez)^2+(ec.Ephi)^2)*8.85*10^(-12)*25*2*pi*r*(1/2))"
+)
+Electro_Static_Energy_eV = El_Stat[-1]
+Th_El=6.2415e+18 * model.evaluate("intop2(2*pi*5.22e3*545.33*r*(T-293.15))")
+Thermal_energy_electrode_eV = Th_El[-1]
+Th_OEL=6.2415e+18*model.evaluate("intop3(2*pi*13.31e3*144*r*(T-293.15))")
+Thermal_energy_OEL_eV = Th_OEL[-1]
+Th_fil=6.2415e+18*model.evaluate("intop4(2*pi*12e3*140*r*(T-293.15))")
+Thermal_energy_filament_eV = Th_fil[-1]
+Th_di=6.2415e+18*model.evaluate("intop5(2*pi*10e3*120*r*(T-293.15))")
+Thermal_energy_dielectric_eV = Th_di[-1]
+
+Surface_Energy_eV = 6.2415e+18 * 2 * np.pi * s_r * h_g * surface_tension
+Volume_Energy_eV = 6.2415e+18 * np.pi * s_r**2 * h_g * delta_mu
+
+#Th_fil = model.evaluate(model/'Th_fil')
+# Ensure the variable int3 is defined in the model
+#model.parameter('int3', 'some_value')  # Replace 'some_value' with the appropriate value for int3
+
+#Th_El = model.evaluate(model/'evaluations'/'Th_El')
+
