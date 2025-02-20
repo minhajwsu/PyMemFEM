@@ -1,0 +1,30 @@
+length_gap_m = h_g
+        Source_Voltage_V = Voltage_Source_loop
+
+        tbl = pd.DataFrame({
+            'ramp_rate': [ramp_rate[0, ramp_rate_loop]],
+            'Source_Voltage_V': [Source_Voltage_V],
+            'device_current_uA2': [device_current_uA2],
+            'Load_VoltageSET_V': [Load_VoltageSET_V],
+            'device_Voltage_V2': [device_Voltage_V2],
+            'device_Resistance_Ohm': [device_Resistance_Ohm],
+            'length_gap_m': [length_gap_m],
+            'max_filament_Temperature_K': [max_filament_Temperature_K],
+            'avg_filament_Temperature_K': [avg_filament_Temperature_K],
+            'max_gap_Temperature_K': [max_gap_Temperature_K],
+            'avg_gap_Temperature_K': [avg_gap_Temperature_K],
+            'Free_Energy_eV': [Free_Energy_eV],
+            'max_dielectric_Temperature_K': [max_dielectric_Temperature_K],
+            'avg_dielectric_Temperature_K': [avg_dielectric_Temperature_K],
+            'Thermal_energy_electrode_eV': [Thermal_energy_electrode_eV],
+            'Thermal_energy_filament_eV': [Thermal_energy_filament_eV],
+            'Thermal_energy_dielectric_eV': [Thermal_energy_dielectric_eV],
+            'Thermal_energy_OEL_eV': [Thermal_energy_OEL_eV],
+            'Electro_Static_Energy_eV': [Electro_Static_Energy_eV],
+            'Surface_Energy_eV': [Surface_Energy_eV],
+            'Volume_Energy_eV': [Volume_Energy_eV],
+            'delta_mu': [delta_mu]
+        })
+
+        DATA_RESET = pd.concat([DATA_RESET, tbl], ignore_index=True)
+        DATA2 = pd.concat([DATA2, tbl], ignore_index=True)
