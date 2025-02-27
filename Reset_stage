@@ -1,0 +1,306 @@
+import mph	
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+mph.option('classkit', True)
+client = mph.start()
+client = mph.start(cores=1)  # start the client with 1 core COMMENT
+model = client.load('RRAM_RESET.mph')  # Now that we have the client up and running, we can tell it to load a model file.
+client.names()
+client.models()
+
+surface_tension = 0.01
+delta_mu_RESET_J = 65e8  # [GJ/m^3]
+pi = np.pi
+
+###_____Electric Conductivity_____###
+alpha_fil = -0.05
+alpha_gap = 0.05
+atomic_vibration = 1e-13  # [s]
+# ramp rate
+R = 1e6
+# Define the parameter delta_mu
+delta_mu = 1e7 #changed from 1e7
+k_eff = 10             # placeholder
+EC_HfO2x = 5e3           # placeholder
+EC_gap = 3e3             # placeholder
+beta_2 = 5e8             # placeholder
+delta_W_uc = 1.0         # placeholder
+delta_W_mc = 0.3         # placeholder
+boltzmann_constant = 1.380649e-23  # [J/K]
+s_r = 2.5e-9
+h_g = 4e-9  # delete this and add inside the loop later
+V_neg_amp = -1.75
+min_Voltage = -1
+max_Voltage = V_neg_amp
+step_increament_Voltage = -0.1
+voltages = np.arange(min_Voltage, max_Voltage, step_increament_Voltage)
+
+# --- Data storage ---
+DATA_RESET = pd.DataFrame()    # global data table
+DATA_min_RESET = pd.DataFrame()  # to store minimal data per voltage sweep
+I_V = pd.DataFrame()             # for I-V curve
+I_V_RESET1 = pd.DataFrame()      # temporary storage for each sweep
+
+def FE_RESET(h_g, s_r, V_S, R):
+    model.parameter('s_r', value=f'{s_r} [m]')
+    A = np.exp(-alpha_fil * np.log(-V_S / (R * atomic_vibration)))
+    B = np.exp(-alpha_gap * np.log(-V_S / (R * atomic_vibration)))
+    model.parameter('h_g', value=f'{h_g} [m]')
+    model.parameter('V_S', value=f'{V_S} [V]')
+    model.solve()
+    
+    avgfilT = model.evaluate("avg_filament_Temperature_K")
+    avg_filament_Temperature_K = avgfilT[-1]
+    maxfilT = model.evaluate("max_filament_Temperature_K")
+    max_filament_Temperature_K = maxfilT[-1]
+    avggapT = model.evaluate("avg_gap_Temperature_K")
+    avg_gap_Temperature_K = avggapT[-1]
+    maxgapT = model.evaluate("max_gap_Temperature_K")
+    max_gap_Temperature_K = maxgapT[-1]
+    avgdielT = model.evaluate("avg_dielectric_Temperature_K")
+    avg_dielectric_Temperature_K = avgdielT[-1]
+    max_dielT = model.evaluate("max_dielectric_Temperature_K")
+    max_dielectric_Temperature_K = max_dielT[-1]
+
+    u1_v = model.evaluate("cir.IvsU1_v")
+    device_Voltage_V2 = u1_v[-1]
+    u1_i = model.evaluate("cir.IvsU1_i")
+    device_current_uA2 = 1e6 * (u1_i[-1])  # remember that the current is negative
+    R_v = model.evaluate("cir.R1_v")
+    Load_VoltageSET_V = R_v[-1]
+    device_Resistance_Ohm = 1e6 * device_Voltage_V2 / device_current_uA2
+    delta_mu = (delta_mu_RESET_J +
+                     beta_2 * (1/delta_W_uc - 1/delta_W_mc) *
+                     (1/1.6e-19) * boltzmann_constant * avg_filament_Temperature_K *
+                     np.log(abs(V_neg_amp)/(R * atomic_vibration)))
+    if delta_mu < 1e7:
+        delta_mu = 1e7
+
+    El_Stat = 6.2415e+18 * model.evaluate(
+        "intop1(((ec.Er)^2+(ec.Ez)^2+(ec.Ephi)^2)*8.85*10^(-12)*25*2*pi*r*(1/2))"
+    )
+    Electro_Static_Energy_eV = El_Stat[-1]
+    Th_El = 6.2415e+18 * model.evaluate("intop2(2*pi*5.22e3*545.33*r*(T-293.15))")
+    Thermal_energy_electrode_eV = Th_El[-1]
+    Th_OEL = 6.2415e+18 * model.evaluate("intop3(2*pi*13.31e3*144*r*(T-293.15))")
+    Thermal_energy_OEL_eV = Th_OEL[-1]
+    Th_fil = 6.2415e+18 * model.evaluate("intop4(2*pi*12e3*140*r*(T-293.15))")
+    Thermal_energy_filament_eV = Th_fil[-1]
+    Th_di = 6.2415e+18 * model.evaluate("intop5(2*pi*10e3*120*r*(T-293.15))")
+    Thermal_energy_dielectric_eV = Th_di[-1]
+
+    Surface_Energy_eV = 6.2415e+18 * 2 * np.pi * s_r * h_g * surface_tension
+    Volume_Energy_eV = 6.2415e+18 * np.pi * s_r**2 * h_g * delta_mu
+
+    return (device_current_uA2, Load_VoltageSET_V, device_Voltage_V2, device_Resistance_Ohm,
+            max_filament_Temperature_K, avg_filament_Temperature_K, max_gap_Temperature_K,
+            avg_gap_Temperature_K, max_dielectric_Temperature_K, avg_dielectric_Temperature_K,
+            Thermal_energy_electrode_eV, Thermal_energy_filament_eV, Thermal_energy_dielectric_eV,
+            Thermal_energy_OEL_eV, Electro_Static_Energy_eV, Surface_Energy_eV, Volume_Energy_eV, delta_mu)
+
+
+# --- Main simulation loops ---
+# Define voltage sweep limits (MATLAB uses a colon operator with negative step)
+min_Voltage = -1
+max_Voltage = V_neg_amp
+step_increament_Voltage = -0.1
+voltages = np.arange(min_Voltage, max_Voltage, step_increament_Voltage)
+
+# Loop over each source voltage
+for V_source in voltages:
+    # Define gap length sweep parameters for this voltage sweep
+    min_gap_length = 5e-10
+    max_gap_length = 4e-9
+    step_increament_gap = 1e-10
+    gap_length = np.arange(min_gap_length, max_gap_length + step_increament_gap, step_increament_gap)
+    
+    # Temporary storage for free energy differences and data for this voltage sweep
+    FE_diff_RESET = np.zeros(len(gap_length))
+    DATA2 = pd.DataFrame()
+    stable_length = None
+
+    # --- Inner loop: Sweep gap lengths ---
+    for h_g in gap_length:
+        V_S = V_source
+        
+        # Get simulation results for the current gap length and voltage
+        results = FE_RESET(h_g, s_r, V_S, R)
+        (device_current_uA2, Load_VoltageSET_V, device_Voltage_V2, device_Resistance_Ohm,
+         max_filament_Temperature_K, avg_filament_Temperature_K, max_gap_Temperature_K,
+         avg_gap_Temperature_K, max_dielectric_Temperature_K, avg_dielectric_Temperature_K,
+         Thermal_energy_electrode_eV, Thermal_energy_filament_eV, Thermal_energy_dielectric_eV,
+         Thermal_energy_OEL_eV, Electro_Static_Energy_eV, Surface_Energy_eV, Volume_Energy_eV,
+         delta_mu_val) = results
+
+        # Compute the free energy (sum of several contributions)
+        Free_Energy_eV = (Thermal_energy_filament_eV + Thermal_energy_dielectric_eV +
+                          Electro_Static_Energy_eV + Surface_Energy_eV + Volume_Energy_eV)
+
+        # Create a dictionary for this row of data
+        row_data = {
+            'ramp_rate': R,
+            'Source_Voltage_V': V_S,
+            'device_current_uA2': device_current_uA2,
+            'Load_VoltageSET_V': Load_VoltageSET_V,
+            'device_Voltage_V2': device_Voltage_V2,
+            'device_Resistance_Ohm': device_Resistance_Ohm,
+            'length_gap_m': h_g,
+            'max_filament_Temperature_K': max_filament_Temperature_K,
+            'avg_filament_Temperature_K': avg_filament_Temperature_K,
+            'max_gap_Temperature_K': max_gap_Temperature_K,
+            'avg_gap_Temperature_K': avg_gap_Temperature_K,
+            'Free_Energy_eV': Free_Energy_eV,
+            'max_dielectric_Temperature_K': max_dielectric_Temperature_K,
+            'avg_dielectric_Temperature_K': avg_dielectric_Temperature_K,
+            'Thermal_energy_electrode_eV': Thermal_energy_electrode_eV,
+            'Thermal_energy_filament_eV': Thermal_energy_filament_eV,
+            'Thermal_energy_dielectric_eV': Thermal_energy_dielectric_eV,
+            'Thermal_energy_OEL_eV': Thermal_energy_OEL_eV,
+            'Electro_Static_Energy_eV': Electro_Static_Energy_eV,
+            'Surface_Energy_eV': Surface_Energy_eV,
+            'Volume_Energy_eV': Volume_Energy_eV,
+            'delta_mu': delta_mu_val
+        }
+        tbl = pd.DataFrame([row_data])
+        
+        # Append to global and temporary data tables
+        DATA_RESET = pd.concat([DATA_RESET, tbl], ignore_index=True)
+        DATA2 = pd.concat([DATA2, tbl], ignore_index=True)
+        
+        # Print current status (concatenated values as in MATLAB)
+        status_str = f"{V_source}|{R}|{V_S}|{device_Resistance_Ohm}|{device_current_uA2}|{device_Voltage_V2}|{h_g}|{max_filament_Temperature_K}|{avg_gap_Temperature_K}|{delta_mu_val}"
+        print(status_str)
+    
+    # --- Compute free energy differences between consecutive gap values ---
+    for i in range(len(DATA2) - 1):
+        FE_diff_RESET[i] = DATA2.iloc[i+1]['Free_Energy_eV'] - DATA2.iloc[i]['Free_Energy_eV']
+    
+    # --- Locate the stable gap length where the free energy difference changes sign ---
+    for i in range(len(FE_diff_RESET) - 1):
+        if FE_diff_RESET[i] < 0 and FE_diff_RESET[i+1] > 0:
+            stable_length = DATA2.iloc[i+1]['length_gap_m']
+            break
+
+    # --- If a stable length was found, refine it using Brent's minimization ---
+    if stable_length is not None:
+        min_gap_length = stable_length - step_increament_gap
+        max_gap_length = stable_length + step_increament_gap
+        ITMAX = 20
+        tol = 1e-2
+        ZEPS = 1e-11
+        CGOLD = 0.3819660
+
+        ax = min_gap_length
+        cx = max_gap_length
+        bx = 0.5*(min_gap_length + max_gap_length) + 0.2e-9
+        a = ax; b = cx; v = bx; w = v; x = v; e = 0.0
+
+        # Evaluate function at initial guess x
+        results = FE_RESET(x, s_r, V_source, R)
+        # Calculate free energy at x (same as before)
+        fx = (results[11] + results[12] + results[14] + 6.2415e+18*2*np.pi*s_r*x*surface_tension +
+              6.2415e+18*np.pi*s_r**2*x*results[-1])
+        fv = fx
+        fw = fx
+
+        for iter in range(ITMAX):
+            # Print status and record current iteration's data
+            status_str = f"{R}|{V_source}|{device_Resistance_Ohm}|{device_current_uA2}|{device_Voltage_V2}|{x}|{avg_filament_Temperature_K}|{avg_gap_Temperature_K}|{results[-1]}"
+            print(status_str)
+            # (Here you may also append a new row to DATA_RESET as in the inner loop)
+            
+            xm = 0.5*(a+b)
+            tol1 = tol * abs(x) + ZEPS
+            tol2 = 2 * tol1
+            if abs(x - xm) <= (tol2 - 0.5*(b - a)):
+                # Convergence condition met; evaluate and record final value
+                results = FE_RESET(x, s_r, V_source, R)
+                # (Recalculate free energy if needed and record data)
+                break
+
+            if abs(e) > tol1:
+                # Attempt parabolic interpolation
+                r_val = (x - w) * (fx - fw)
+                q_val = (x - v) * (fx - fw)
+                p = (x - v) * q_val - (x - w) * r_val
+                q_val = 2 * (q_val - r_val)
+                if q_val > 0:
+                    p = -p
+                q_val = abs(q_val)
+                etemp = e
+                e = d if 'd' in locals() else 0.0  # use previous d if available
+                if abs(p) >= abs(0.5*q_val*etemp) or (p <= q_val*(a - x)) or (p >= q_val*(b - x)):
+                    # Use golden-section step
+                    if x >= xm:
+                        e = a - x
+                    else:
+                        e = b - x
+                    d = CGOLD * e
+                    if abs(d) < tol1:
+                        d = np.sign(d) * tol1
+                    u = x + d
+                else:
+                    d = p / q_val
+                    u = x + d
+                    if (u - a) < tol2 or (b - u) < tol2:
+                        d = np.sign(xm - x) * tol1
+                        u = x + d
+            else:
+                # Golden-section step if no meaningful previous step exists
+                if x >= xm:
+                    e = a - x
+                else:
+                    e = b - x
+                d = CGOLD * e
+                if abs(d) < tol1:
+                    d = np.sign(d) * tol1
+                u = x + d
+
+            # Evaluate function at new candidate u
+            results = FE_RESET(u, s_r, V_source, R)
+            fu = (results[11] + results[12] + results[14] +
+                  6.2415e+18*2*np.pi*s_r*u*surface_tension +
+                  6.2415e+18*np.pi*s_r**2*u*results[-1])
+            if fu < fx:
+                if u >= x:
+                    a = x
+                else:
+                    b = x
+                v, fv = w, fw
+                w, fw = x, fx
+                x, fx = u, fu
+            else:
+                if u < x:
+                    a = u
+                else:
+                    b = u
+                if fu <= fw or w == x:
+                    v, fv = w, fw
+                    w, fw = u, fu
+                elif fu <= fv or v == x or v == w:
+                    v, fv = u, fu
+                continue
+
+        # After Brent's loop, record the refined result (here we simply append the final row)
+        I_V_tbl = tbl  # tbl from the last inner loop; in a full implementation, update with refined x
+        I_V_RESET1 = pd.concat([I_V_RESET1, I_V_tbl], ignore_index=True)
+    
+# --- Post-processing after all voltage sweeps ---
+if not I_V_RESET1.empty:
+    device_Voltage_V = I_V_RESET1['device_Voltage_V2']
+    device_current_uA = I_V_RESET1['device_current_uA2']
+    I_V_RESET = pd.DataFrame({
+        'device_Voltage_V': device_Voltage_V,
+        'device_current_uA': device_current_uA
+    })
+    DATA_min_RESET = pd.concat([DATA_min_RESET, I_V_RESET1], ignore_index=True)
+    I_V = pd.concat([I_V, I_V_RESET], ignore_index=True)
+    s_g = I_V_RESET1.iloc[-1]['length_gap_m']
+else:
+    s_g = 1e-9
+
+# End of simulation
+model.reset()
+model.clear()
