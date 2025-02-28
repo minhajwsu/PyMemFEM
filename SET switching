@@ -1,0 +1,100 @@
+import mph	
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Define parameters
+rel_permittivity = 25 * 8.85e-12  # [Nm^2/C^2]
+boltzmann_constant = 1.381e-23  # [J/K]
+atomic_vibration = 1e-13  # [s]
+
+# Circuit parameters
+ramp_rates = [0.5e2, 1e2, 0.5e3, 1e3, 0.5e4, 1e4, 0.5e5, 1e5, 0.5e6, 1e6]
+
+# Initialize summary DataFrame
+summary_df = pd.DataFrame(columns=["Ramp Rate", "Last Threshold Voltage (V)"])
+
+for ramp_rate in ramp_rates:
+    print(f"Running simulation with ramp_rate = {ramp_rate}")
+    
+    # Rest of the code remains the same
+    V_pos_amp = 1.6  # [V]
+    V_neg_amp = -1.75  # [V]
+    step_volt = 0.05  # [V]
+    
+    # Filament nucleation parameters
+    height_filament = 100e-9  # [m]
+    nucleation_barrier = 1 * 1.6e-19  # [J]
+    lambda_param = 6.6487  # following e-field of 1V/5nm
+    critical_nucleation_radius = 3.5e-9  # [m]
+    min_filament_radius = 0.6e-9  # [m]
+    alpha = min_filament_radius / critical_nucleation_radius
+
+    # Number of cycles
+    cycle = 2
+
+    mph.option('classkit', True)
+    client = mph.start()
+    client = mph.start(cores=1)  # start the client with 1 core COMMENT
+    model = client.load('RRAM_OFF_p5na.mph')  # Now that we have the client up and running, we can tell it to load a model file.
+    client.names()
+    client.models()
+    model.parameter('t_rise', value=f'{V_pos_amp/ramp_rate} [s]')
+    model.solve()  # Solve the model before evaluating
+    # for (name, value) in model.parameters().items():
+
+    #     description = model.description(name)
+
+    #     print(f'{description:20} {name} = {value}')
+    
+    # Extract current and voltage data
+    u1_v = model.evaluate("cir.IvsU1_v")
+    u1_i = model.evaluate("cir.IvsU1_i")
+    v1_v = model.evaluate("cir.V1_v")
+    r1_v = model.evaluate("cir.R1_v")
+    temperature = model.evaluate("gap_temp")
+    time = model.evaluate("t")
+    
+    # Create a DataFrame
+    df = pd.DataFrame({
+        "Time (s)": time,
+        "device_VoltageOFF_V": u1_v,
+        "device_CurrentOFF_uA": 1e6 * abs(u1_i),
+        "source_VoltageOFF_V": v1_v,
+        "load_VoltageOFF_V": r1_v,
+        "avg_gap_Temperature": temperature,
+        "Threshold_Voltage_V": np.nan,
+        "Voltage_wiggle_V": np.nan
+    })
+    
+    for j in range(len(df)):
+        avg_gap_Temperature_K = df["avg_gap_Temperature"].iloc[j]
+        Voltage_wiggle_V = (height_filament * nucleation_barrier) / (boltzmann_constant * avg_gap_Temperature_K) * np.sqrt((3 * np.pi**3 * alpha**3 * lambda_param * nucleation_barrier) / (32 * rel_permittivity * critical_nucleation_radius**3))
+        Threshold_Voltage_V = Voltage_wiggle_V / np.log(Voltage_wiggle_V / (ramp_rate * atomic_vibration))
+        
+        df.at[j, "Voltage_wiggle_V"] = Voltage_wiggle_V
+        df.at[j, "Threshold_Voltage_V"] = Threshold_Voltage_V
+
+    # Check if device voltage exceeds threshold voltage and record data up to that point
+    exceed_index = df[df["device_VoltageOFF_V"] > df["Threshold_Voltage_V"]].index
+
+    if not exceed_index.empty:
+        cutoff_index = exceed_index[0]
+        df = df.iloc[:cutoff_index + 1]
+
+        # Get the last value of Threshold_Voltage_V for the current ramp rate
+        last_threshold_voltage = df["Threshold_Voltage_V"].iloc[-1]
+
+        # Append the ramp rate and last threshold voltage to a new DataFrame
+        if 'summary_df' not in locals():
+            summary_df = pd.DataFrame(columns=["Ramp Rate", "Last Threshold Voltage (V)"])
+
+        summary_df = summary_df.append({"Ramp Rate": ramp_rate, "Last Threshold Voltage (V)": last_threshold_voltage}, ignore_index=True)
+
+    # Export the summary DataFrame to CSV
+    summary_df.to_csv("summary_set_voltages.csv", index=False)
+    # Display the updated DataFrame
+    print(df.head())
+
+    # Save the updated data to CSV for reference
+    df.to_csv(f"rram_data_threshold_ramp_rate_{int(ramp_rate)}.csv", index=False)
