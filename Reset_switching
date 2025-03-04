@@ -1,0 +1,75 @@
+import mph
+import numpy as np
+import pandas as pd
+
+# Initialize COMSOL client
+mph.option('classkit', True)
+client = mph.start(cores=1)
+model = client.load('RRAM_ON_n5na.mph')
+model.solve()
+
+# Extract required data from COMSOL
+device_VoltageON_neg_V = model.evaluate("cir.IvsU1_v")
+device_CurrentON_neg_uA = -1e6 * np.abs(model.evaluate("cir.IvsU1_i"))
+source_VoltageON_neg_V = model.evaluate("cir.V1_v")
+load_VoltageON_neg_V = model.evaluate("cir.R1_v")
+max_fil_TempON_neg_K = model.evaluate("fil_temp")
+time_neg = model.evaluate("t")
+SET_Temp = 3815.7  # Example value, replace with actual value
+
+# Create DataFrame for the table
+tbl_ON_neg = pd.DataFrame({
+    'time_neg_s': time_neg,
+    'device_VoltageON_neg_V': device_VoltageON_neg_V,
+    'device_CurrentON_neg_uA': device_CurrentON_neg_uA,
+    'source_VoltageON_neg_V': source_VoltageON_neg_V,
+    'load_VoltageON_neg_V': load_VoltageON_neg_V,
+    'max_fil_TempON_neg_K': max_fil_TempON_neg_K
+})
+
+# Find indices where temperature is below SET_Temp
+valid_indices = np.where(max_fil_TempON_neg_K < SET_Temp)[0]
+
+# Determine starting index
+start_neg = valid_indices[-1] if valid_indices.size > 0 else np.argmin(device_VoltageON_neg_V)
+
+# Extract relevant data
+RESET_Voltage_V = device_VoltageON_neg_V[start_neg]
+device_Voltage_V = device_VoltageON_neg_V[:start_neg + 1]
+device_current_uA = device_CurrentON_neg_uA[:start_neg + 1]
+
+# Create DataFrame for I-V data
+I_V_ON_neg = pd.DataFrame({
+    'device_Voltage_V': device_Voltage_V,
+    'device_current_uA': device_current_uA
+})
+
+# Create DataFrame for I-V data
+I_V_ON_neg = pd.DataFrame({
+    'device_Voltage_V': device_Voltage_V,
+    'device_current_uA': device_current_uA
+})
+
+# Print or save results
+print("tbl_ON_neg:")
+print(tbl_ON_neg)
+print("\nI_V_ON_neg:")
+print(I_V_ON_neg)
+
+# Optionally, save the results to CSV files
+tbl_ON_neg.to_csv('tbl_ON_neg.csv', index=False)
+I_V_ON_neg.to_csv('I_V_ON_neg.csv', index=False)
+
+# Append to existing data (initialize if not present)
+# DATA_ON_neg = pd.concat([globals().get('DATA_ON_neg', pd.DataFrame()), tbl_ON_neg], ignore_index=True)
+# I_V = pd.concat([globals().get('I_V', pd.DataFrame()), I_V_ON_neg], ignore_index=True)
+
+# Print or save results
+# print("DATA_ON_neg:")
+# print(DATA_ON_neg)
+# print("\nI_V:")
+# print(I_V)
+
+# Optionally, save the results to CSV files
+# DATA_ON_neg.to_csv('DATA_ON_neg.csv', index=False)
+# I_V.to_csv('I_V.csv', index=False)
